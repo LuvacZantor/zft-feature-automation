@@ -4,10 +4,57 @@ Custom D&D5e feature automation for Foundry VTT.
 
 ## Compatibility
 
-- **Tested:** Foundry VTT V13 Build 351 with D&D5e 5.2.5
-- **Intended support:** Foundry VTT V13 and V14
-- **V14 status:** Not yet verified
-- **Required module:** Midi-QOL
+- Tested target: Foundry VTT V13 Build 351 with D&D5e 5.2.5
+- Intended support: Foundry VTT V13
+- V14 status: Not verified for the Battle Familiar automation
+- Required module: Midi-QOL
+- Feature-specific dependency: Chris's Premades (CPR) is required for Battle Familiar
+
+## Battle Familiar
+
+Battle Familiar automation is intended for the 2024 Battle Familiar spell imported by DDB Importer.
+
+When Battle Familiar is cast, ZFT:
+
+- Detects the spell by `battle-familiar` identifier or spell name.
+- Uses CPR's V13 summon engine instead of maintaining a separate summon framework.
+- Prompts for Brute, Flyer, or Stalker form.
+- Prompts for Celestial, Fey, or Fiend when creating a new Battle Familiar.
+- Uses CPR's `CPR - Bestial Spirit` actor as a temporary summon chassis.
+- Calculates AC and HP from the spell slot level.
+- Sets the Battle Familiar ability scores, movement, Darkvision, and condition immunities.
+- Applies Talented to ability checks and saving throws.
+- Creates Rend using the summoner's spell attack modifier and the Battle Familiar damage formula.
+- Creates Multiattack using half the spell level, rounded down.
+- Adds Flyby for Flyer and Prowl for Stalker.
+- Gives a newly summoned Battle Familiar its own Initiative through CPR.
+- Replaces an earlier ZFT Battle Familiar when the spell is cast again.
+- Can use portrait/token artwork from GM-selected Actor compendiums for newly summoned familiars without copying that artwork into ZFT.
+- Provides a searchable graphical appearance picker that shows portrait artwork first and token artwork as a fallback.
+- Shows the source compendium under each appearance.
+- Loads 40 appearance results initially and automatically adds more as the caster scrolls.
+- Lets the caster choose a specific appearance or use the per-cast Randomize Appearance checkbox.
+- Loads only selected compendium indexes when a new familiar actually needs an appearance and caches the filtered list for the session.
+
+If CPR Find Familiar is already active and its familiar is currently placed, ZFT empowers that familiar in place instead of summoning a second familiar. The familiar retains its current HP and creature identity, receives Battle Familiar temporary HP and Battle Familiar statistics, and is restored when the effect ends or the granted temporary HP reaches 0.
+
+### Appearance configuration
+
+Use **Configure Settings → Module Settings → ZFT Feature Automation → Battle Familiar Appearance** to configure the appearance system.
+
+- Only explicitly checked Actor compendiums are used as appearance sources.
+- The default sources are `zantors-dbbi.monsters` and `dnd-monster-manual.actors` when those packs exist.
+- Other Actor compendiums remain ignored unless enabled by the GM.
+- The settings screen shows each compendium's Actor total.
+- Opening the settings screen reads only the basic Actor indexes needed for those totals; it does not build the Battle Familiar appearance cache.
+- Beast-only filtering is enabled by default.
+- Exclude Creatures with “Legacy” in the Name is enabled by default and removes matching creature names from the appearance list.
+- Randomize Appearance controls the default state of the per-cast Randomize Appearance checkbox; the caster can override it for each summon.
+- Changing an appearance-source/filter setting invalidates the current session cache so it rebuilds on the next applicable cast.
+
+### V13 testing note
+
+The Find Familiar empowerment and compendium appearance paths are V13 code and should be validated before moving this release to production. Pocket Dimension interaction while Battle Familiar is active remains an edge case to test explicitly.
 
 ## 2024 Arcane Ward
 
@@ -36,7 +83,7 @@ Projected Ward is handled as an optional Reaction when another creature takes da
 - Requires the ward owner to be able to see the damaged creature.
 - Uses Midi-QOL's configured Reaction timeout.
 - Displays a live countdown during the Reaction window.
-- Provides explicit **Use Projected Ward** and **Do Not Use** choices.
+- Provides explicit Use Projected Ward and Do Not Use choices.
 - Does not consume the Reaction if the prompt is declined, closed, or times out.
 - Absorbs damage from the ward and passes only overflow damage through to the protected creature.
 - Correctly handles temporary HP after the ward absorbs damage.
@@ -58,4 +105,4 @@ The effective order is:
 
 ## Version
 
-Current release: **v1.2.0**
+Current release: v1.3.7

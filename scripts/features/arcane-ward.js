@@ -1,4 +1,4 @@
-console.log("[ZFT] 🛡️ v1.2.0 | Arcane Ward feature automation loading");
+console.log("[ZFT] 🛡️ v1.3.0 | Arcane Ward feature automation loading");
 
 const MODULE_ID = "zft-feature-automation";
 const ARCANE_WARD_NAME = "Arcane Ward";
@@ -6,8 +6,12 @@ const PROJECTED_WARD_NAME = "Projected Ward";
 const ARCANE_WARD_IDENTIFIER = "arcane-ward";
 const PROJECTED_WARD_IDENTIFIER = "projected-ward";
 const PROJECTED_WARD_RANGE = 30;
+const ABJURATION_SCHOOL = "abj";
+const ARCANE_WARD_CREATED_FLAG = "arcaneWardCreated";
+const PROJECTED_WARD_SOCKET_HANDLER = "promptProjectedWard";
 
 const damageBatches = new WeakMap();
+let featureSocket = null;
 
 function log(message, data) {
   if (data === undefined) console.log(`[ZFT] ${message}`);
@@ -25,8 +29,8 @@ function error(message, data) {
 }
 
 function debug(message, data) {
-  if (data === undefined) console.log(`[ZFT] 🧪 v1.2.0 | ${message}`);
-  else console.log(`[ZFT] 🧪 v1.2.0 | ${message}`, data);
+  if (data === undefined) console.log(`[ZFT] 🧪 v1.3.0 | ${message}`);
+  else console.log(`[ZFT] 🧪 v1.3.0 | ${message}`, data);
 }
 
 function itemDiagnostic(item) {
@@ -107,6 +111,226 @@ async function getWardState(actor) {
   return { ward, maximum, spent, remaining };
 }
 
+function getWizardLevel(actor) {
+  const wizardClass = actor?.classes?.wizard
+    ?? actor?.items?.find(item =>
+      item?.type === "class"
+      && (item?.system?.identifier === "wizard" || item?.name === "Wizard")
+    )
+    ?? null;
+
+  return Math.max(0, Number(wizardClass?.system?.levels ?? 0));
+}
+
+async function getRuleWardMaximum(actor, ward) {
+  const wizardLevel = getWizardLevel(actor);
+  const intelligenceModifier = Number(actor?.system?.abilities?.int?.mod ?? 0);
+
+  if (wizardLevel > 0 && Number.isFinite(intelligenceModifier)) {
+    return Math.max(0, (wizardLevel * 2) + intelligenceModifier);
+  }
+
+  return evaluateWardMaximum(ward);
+}
+
+function getConsumedSpellSlotLevel(activity, usageConfig = {}, results = {}) {
+  const spell = activity?.item;
+  if (!spell || spell.type !== "spell") return 0;
+  if (activity?.requiresSpellSlot !== true || activity?.consumption?.spellSlot !== true) return 0;
+  if (usageConfig?.consume === false) return 0;
+
+  const consumeSpellSlot = usageConfig?.consume === true
+    || usageConfig?.consume?.spellSlot === true;
+  if (!consumeSpellSlot) return 0;
+
+  const slotKey = usageConfig?.spell?.slot ?? null;
+  if (!slotKey) return 0;
+
+  const actorUpdates = results?.updates?.actor ?? {};
+  const updatePath = `system.spells.${slotKey}.value`;
+  const consumed = Object.prototype.hasOwnProperty.call(actorUpdates, updatePath)
+    || foundry.utils.getProperty(actorUpdates, updatePath) !== undefined;
+  if (!consumed) return 0;
+
+  const slotLevel = Number(spell.actor?.system?.spells?.[slotKey]?.level);
+  if (Number.isFinite(slotLevel) && slotLevel > 0) return slotLevel;
+
+  const standardSlot = /^spell(\d+)$/.exec(String(slotKey));
+  if (standardSlot) return Number(standardSlot[1]);
+
+  const effectiveLevel = Number(spell.system?.level ?? 0) + Number(usageConfig?.scaling ?? 0);
+  return Number.isFinite(effectiveLevel) && effectiveLevel > 0 ? effectiveLevel : 0;
+}
+
+async function chooseArcaneWardCreation(actor, spell, spellLevel, maximum) {
+  const content = `
+    <div class="zft-arcane-ward-create-dialog">
+      <p><strong>${escapeHtml(actor.name)}</strong> cast <strong>${escapeHtml(spell.name)}</strong> with a level ${spellLevel} spell slot.</p>
+      <p>Create <strong>Arcane Ward</strong> with <strong>${maximum}</strong> HP?</p>
+    </div>`;
+
+  try {
+    const response = await foundry.applications.api.DialogV2.wait({
+      window: { title: `Arcane Ward — ${actor.name}` },
+      content,
+      modal: true,
+      rejectClose: false,
+      buttons: [
+        {
+          action: "create",
+          label: "Create Arcane Ward",
+          icon: "fa-solid fa-shield-halved",
+          default: true,
+          callback: () => true
+        },
+        {
+          action: "decline",
+          label: "Not Now",
+          icon: "fa-solid fa-xmark",
+          callback: () => false
+        }
+      ]
+    });
+
+    return response === true;
+  } catch (err) {
+    warn(`⚠️ Arcane Ward | Creation dialog failed for ${actor.name}`, err);
+    return false;
+  }
+}
+
+async function processArcaneWardSpellUse(activity, usageConfig = {}, results = {}) {
+  try {
+    const spell = activity?.item;
+    const actor = spell?.actor;
+
+    if (!spell || spell.type !== "spell" || !actor) return;
+    if (spell.system?.school !== ABJURATION_SCHOOL) return;
+
+    const ward = findArcaneWard(actor);
+    if (!ward) return;
+
+    const spellLevel = getConsumedSpellSlotLevel(activity, usageConfig, results);
+    if (spellLevel <= 0) {
+      debug(`Arcane Ward spell cast ignored | ${actor.name}`, {
+        spell: spell.name,
+        reason: "no spell slot was consumed"
+      });
+      return;
+    }
+
+    const state = await getWardState(actor);
+    if (!state) return;
+
+    const maximum = await getRuleWardMaximum(actor, ward);
+    if (maximum <= 0) {
+      warn(`⚠️ Arcane Ward | Could not determine ward maximum for ${actor.name}`);
+      return;
+    }
+
+    let created = ward.getFlag(MODULE_ID, ARCANE_WARD_CREATED_FLAG);
+
+    // Migration behavior for wards created before ZFT tracked creation state.
+    // A ward with HP remaining is treated as already created for the current day.
+    if (created === undefined || created === null) {
+      created = state.remaining > 0;
+      if (created) {
+        await ward.setFlag(MODULE_ID, ARCANE_WARD_CREATED_FLAG, true);
+        debug(`Arcane Ward creation state migrated | ${actor.name}`, {
+          inferredCreated: true,
+          remaining: state.remaining
+        });
+      }
+    }
+
+    debug(`Arcane Ward qualifying spell cast | ${actor.name}`, {
+      spell: spell.name,
+      spellLevel,
+      created: created === true,
+      maximum,
+      remaining: state.remaining
+    });
+
+    if (created !== true) {
+      const createWard = await chooseArcaneWardCreation(actor, spell, spellLevel, maximum);
+      if (!createWard) {
+        log(`🛑 Arcane Ward | ${actor.name} declined ward creation after casting ${spell.name}`);
+        return;
+      }
+
+      await ward.update({
+        "system.uses.max": maximum,
+        "system.uses.spent": 0,
+        [`flags.${MODULE_ID}.${ARCANE_WARD_CREATED_FLAG}`]: true
+      });
+
+      log(`🛡️ Arcane Ward | ${actor.name} created the ward at ${maximum}/${maximum} HP after casting ${spell.name}`, {
+        actorUuid: actor.uuid,
+        itemUuid: ward.uuid,
+        spellUuid: spell.uuid,
+        spellLevel
+      });
+      return;
+    }
+
+    const restored = Math.min(spellLevel * 2, Math.max(0, maximum - state.remaining));
+    const newRemaining = Math.min(maximum, state.remaining + restored);
+    const newSpent = Math.max(0, maximum - newRemaining);
+
+    await ward.update({
+      "system.uses.max": maximum,
+      "system.uses.spent": newSpent
+    });
+
+    if (restored > 0) {
+      log(`✨ Arcane Ward | ${actor.name} restored ${restored} HP from ${spell.name}; ${newRemaining}/${maximum} ward HP`, {
+        actorUuid: actor.uuid,
+        itemUuid: ward.uuid,
+        spellUuid: spell.uuid,
+        spellLevel
+      });
+    } else {
+      debug(`Arcane Ward restoration skipped | ${actor.name}`, {
+        reason: "ward already at maximum HP",
+        spell: spell.name,
+        spellLevel,
+        maximum
+      });
+    }
+  } catch (err) {
+    error("❌ Arcane Ward | Abjuration spell processing failed", err);
+  }
+}
+
+async function processArcaneWardRest(actor, result = {}, config = {}) {
+  try {
+    const isLongRest = result?.longRest === true
+      || result?.type === "long"
+      || config?.type === "long";
+    if (!isLongRest || !actor) return;
+
+    const ward = findArcaneWard(actor);
+    if (!ward) return;
+
+    const maximum = await getRuleWardMaximum(actor, ward);
+    if (maximum <= 0) return;
+
+    await ward.update({
+      "system.uses.max": maximum,
+      "system.uses.spent": maximum,
+      [`flags.${MODULE_ID}.${ARCANE_WARD_CREATED_FLAG}`]: false
+    });
+
+    log(`🌙 Arcane Ward | ${actor.name} completed a Long Rest; ward ended and can be created again`, {
+      actorUuid: actor.uuid,
+      itemUuid: ward.uuid,
+      maximum
+    });
+  } catch (err) {
+    error("❌ Arcane Ward | Long Rest reset failed", err);
+  }
+}
+
 function resolveActorFromDamageItem(damageItem) {
   const actorUuid = damageItem?.actorUuid;
   if (actorUuid) {
@@ -168,8 +392,6 @@ function setDamageAmount(damageItem, actor, amount) {
   const tempDamage = incoming > 0 ? Math.min(oldTemp, incoming) : 0;
   const hpDamage = Math.max(0, incoming - tempDamage);
 
-  // Midi-QOL validates hpDamage against the live damage detail. All of these
-  // fields must agree or Midi will ignore the hpDamage override.
   damageItem.totalDamage = incoming;
   damageItem.tempDamage = tempDamage;
   damageItem.hpDamage = hpDamage;
@@ -178,9 +400,6 @@ function setDamageAmount(damageItem, actor, amount) {
 
   if ("appliedDamage" in damageItem) damageItem.appliedDamage = incoming;
 
-  // Projected/Arcane Ward applies after saves, resistance, vulnerability, etc.
-  // Rewrite the post-mitigation damage detail, but intentionally leave
-  // rawDamageDetail untouched.
   if (Array.isArray(damageItem.damageDetail) && damageItem.damageDetail.length) {
     for (const detail of damageItem.damageDetail) {
       if ("value" in detail) detail.value = 0;
@@ -244,9 +463,6 @@ function getExpectedDamageTargetCount(workflow) {
     return Number(targets.size);
   }
 
-  // Self-target and unusual Midi workflows can reach the hook without a
-  // populated workflow.targets collection. In those cases this hook represents
-  // the complete damage pass.
   return 1;
 }
 
@@ -361,8 +577,24 @@ function currentSceneWardOwners(entries) {
   return owners;
 }
 
-function canCurrentUserControlActor(actor) {
-  return game.user?.isGM === true || actor?.isOwner === true;
+function getProjectedWardPromptUser(actor) {
+  if (!actor) return null;
+
+  const activePlayerOwners = Array.from(game.users ?? [])
+    .filter(user =>
+      user.active &&
+      !user.isGM &&
+      actor.testUserPermission(user, CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER)
+    )
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  if (activePlayerOwners.length > 0) return activePlayerOwners[0];
+
+  const activeGMs = Array.from(game.users ?? [])
+    .filter(user => user.active && user.isGM)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  return activeGMs[0] ?? null;
 }
 
 async function reactionAlreadyUsed(actor) {
@@ -515,17 +747,20 @@ function getMidiReactionTimeoutSeconds() {
   return 30;
 }
 
-async function chooseProjectedWardTarget(owner, candidates, wardRemaining) {
+async function showProjectedWardDialog(payload = {}) {
+  const ownerName = String(payload.ownerName ?? "Arcane Ward owner");
+  const wardRemaining = Math.max(0, Number(payload.wardRemaining ?? 0));
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
   if (!candidates.length) return null;
 
   const timeoutSeconds = getMidiReactionTimeoutSeconds();
   const options = candidates
-    .map((candidate, index) => `<option value="${index}">${escapeHtml(candidate.actor.name)} — ${candidate.damage} damage</option>`)
+    .map((candidate, index) => `<option value="${index}">${escapeHtml(candidate.name)} — ${Math.max(0, Number(candidate.damage ?? 0))} damage</option>`)
     .join("");
 
   const content = `
     <div class="zft-projected-ward-dialog">
-      <p><strong>${escapeHtml(owner.actor.name)}</strong> has <strong>${wardRemaining}</strong> Arcane Ward HP remaining.</p>
+      <p><strong>${escapeHtml(ownerName)}</strong> has <strong>${wardRemaining}</strong> Arcane Ward HP remaining.</p>
       <p>Choose one damaged creature to protect with <strong>Projected Ward</strong>.</p>
       <div class="form-group">
         <label>Creature</label>
@@ -550,7 +785,7 @@ async function chooseProjectedWardTarget(owner, candidates, wardRemaining) {
 
   try {
     const response = await foundry.applications.api.DialogV2.wait({
-      window: { title: `Projected Ward — ${owner.actor.name}` },
+      window: { title: `Projected Ward — ${ownerName}` },
       content,
       modal: true,
       rejectClose: false,
@@ -613,20 +848,104 @@ async function chooseProjectedWardTarget(owner, candidates, wardRemaining) {
     clearTimers();
 
     if (timedOut) {
-      log(`⏱️ Projected Ward | ${owner.actor.name} reaction window expired after ${timeoutSeconds} seconds`);
+      log(`⏱️ Projected Ward | ${ownerName} reaction window expired after ${timeoutSeconds} seconds`);
       return null;
     }
 
     if (!response || response.action !== "use") return null;
 
-    const choice = response.index;
+    const choice = Number(response.index);
     if (!Number.isInteger(choice) || choice < 0 || choice >= candidates.length) return null;
-    return candidates[choice];
+    return choice;
   } catch (err) {
     clearTimers();
-    warn(`⚠️ Projected Ward | Dialog failed for ${owner.actor.name}`, err);
+    warn(`⚠️ Projected Ward | Dialog failed for ${ownerName}`, err);
     return null;
   }
+}
+
+async function promptProjectedWardRemote(payload = {}) {
+  debug("Projected Ward remote prompt received", {
+    user: game.user?.name ?? null,
+    owner: payload?.ownerName ?? null,
+    candidates: Array.isArray(payload?.candidates) ? payload.candidates : []
+  });
+
+  return showProjectedWardDialog(payload);
+}
+
+function registerFeatureSocket() {
+  if (featureSocket || !globalThis.socketlib) return featureSocket;
+
+  try {
+    featureSocket = socketlib.registerModule(MODULE_ID);
+    featureSocket.register(PROJECTED_WARD_SOCKET_HANDLER, promptProjectedWardRemote);
+    log("🔌 Projected Ward | SocketLib routing registered");
+  } catch (err) {
+    featureSocket = null;
+    error("❌ Projected Ward | SocketLib registration failed", err);
+  }
+
+  return featureSocket;
+}
+
+async function chooseProjectedWardTarget(owner, candidates, wardRemaining) {
+  if (!candidates.length) return null;
+
+  const promptUser = getProjectedWardPromptUser(owner.actor);
+  if (!promptUser) {
+    warn(`⚠️ Projected Ward | No active owner or GM is available to answer ${owner.actor.name}'s Reaction`);
+    return null;
+  }
+
+  const payload = {
+    ownerName: owner.actor.name,
+    wardRemaining,
+    candidates: candidates.map(candidate => ({
+      name: candidate.actor.name,
+      damage: candidate.damage
+    }))
+  };
+
+  debug(`Projected Ward prompt routing | ${owner.actor.name}`, {
+    workflowUser: game.user?.name ?? null,
+    promptUser: promptUser.name,
+    promptUserId: promptUser.id,
+    local: promptUser.id === game.user?.id,
+    socketReady: Boolean(featureSocket)
+  });
+
+  let selectedIndex = null;
+
+  if (promptUser.id === game.user?.id) {
+    selectedIndex = await showProjectedWardDialog(payload);
+  } else if (featureSocket) {
+    try {
+      selectedIndex = await featureSocket.executeAsUser(
+        PROJECTED_WARD_SOCKET_HANDLER,
+        promptUser.id,
+        payload
+      );
+    } catch (err) {
+      warn(`⚠️ Projected Ward | Remote prompt failed for ${promptUser.name}`, err);
+
+      if (game.user?.isGM) {
+        warn(`⚠️ Projected Ward | Falling back to the GM prompt for ${owner.actor.name}`);
+        selectedIndex = await showProjectedWardDialog(payload);
+      }
+    }
+  } else if (game.user?.isGM) {
+    warn(`⚠️ Projected Ward | SocketLib is unavailable; falling back to the GM prompt for ${owner.actor.name}`);
+    selectedIndex = await showProjectedWardDialog(payload);
+  } else {
+    warn(`⚠️ Projected Ward | SocketLib is unavailable and ${game.user?.name ?? "current user"} cannot route the prompt`);
+  }
+
+  if (selectedIndex === null || selectedIndex === undefined) return null;
+
+  const choice = Number(selectedIndex);
+  if (!Number.isInteger(choice) || choice < 0 || choice >= candidates.length) return null;
+  return candidates[choice];
 }
 
 async function postProjectedWardChat(owner, candidate, absorbed, incoming, overflow) {
@@ -648,10 +967,15 @@ async function processProjectedWards(entries, workflow) {
   }
 
   for (const owner of owners) {
-    const controllable = canCurrentUserControlActor(owner.actor);
-    debug(`Projected Ward owner evaluation | ${owner.actor.name}`, { controllable, user: game.user?.name ?? null, isGM: game.user?.isGM ?? false });
-    if (!controllable) {
-      debug(`Projected Ward owner rejected | ${owner.actor.name}`, { reason: "current user cannot control actor" });
+    const promptUser = getProjectedWardPromptUser(owner.actor);
+    debug(`Projected Ward owner evaluation | ${owner.actor.name}`, {
+      workflowUser: game.user?.name ?? null,
+      workflowUserIsGM: game.user?.isGM ?? false,
+      promptUser: promptUser?.name ?? null,
+      promptUserId: promptUser?.id ?? null
+    });
+    if (!promptUser) {
+      debug(`Projected Ward owner rejected | ${owner.actor.name}`, { reason: "no active owner or GM is available" });
       continue;
     }
 
@@ -757,10 +1081,6 @@ async function processDamageEvent(hookToken, context = {}) {
 
   const entries = collectDamageBatch(workflow, hookToken, hookDamageItem);
 
-  // Midi calls preTargetDamageApplication once per target. Do not prompt on
-  // the early calls. The live damage-item objects remain mutable after their
-  // individual hooks return, so we can safely process the entire damage pass
-  // when the last target reaches this hook.
   if (!entries) return;
 
   debug("Arcane Ward damage entries resolved", {
@@ -789,12 +1109,19 @@ async function processDamageEvent(hookToken, context = {}) {
   }
 }
 
+Hooks.once("socketlib.ready", registerFeatureSocket);
+
 Hooks.once("ready", () => {
   if (!game.modules.get("midi-qol")?.active) {
     warn("⚠️ Arcane Ward | Midi-QOL is not active; automation disabled");
     return;
   }
 
+  if (game.modules.get("socketlib")?.active) registerFeatureSocket();
+  else warn("⚠️ Projected Ward | SocketLib is not active; remote player prompt routing will fall back to the GM");
+
   Hooks.on("midi-qol.preTargetDamageApplication", processDamageEvent);
-  log("✅ v1.2.0 | Arcane Ward feature automation ready");
+  Hooks.on("dnd5e.postUseActivity", processArcaneWardSpellUse);
+  Hooks.on("dnd5e.restCompleted", processArcaneWardRest);
+  log("✅ v1.3.0 | Arcane Ward feature automation ready");
 });

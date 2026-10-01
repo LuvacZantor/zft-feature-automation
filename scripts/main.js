@@ -1,4 +1,4 @@
-console.log("[ZFT] 🧩 v1.2.0 | ZFT Feature Automation loading");
+console.log("[ZFT] 🧩 v1.3.7 | ZFT Feature Automation loading");
 
 globalThis.ZFTFA ??= {
   MODULE_ID: "zft-feature-automation",
@@ -6,7 +6,8 @@ globalThis.ZFTFA ??= {
     ARCANE_WARD: "Arcane Ward",
     PROJECTED_WARD: "Projected Ward",
     BLOODLUST: "Bloodlust",
-    GAZE_OF_TWO_MINDS: "Eldritch Invocations: Gaze of Two Minds"
+    GAZE_OF_TWO_MINDS: "Eldritch Invocations: Gaze of Two Minds",
+    BATTLE_FAMILIAR: "Battle Familiar"
   },
   FLAGS: {
     BLOODLUST_SANGUINE_FEAST_TURN: "bloodlustSanguineFeastTurn",
@@ -16,7 +17,8 @@ globalThis.ZFTFA ??= {
   },
   MODULES: {
     MIDI_QOL: "midi-qol",
-    REST_RECOVERY: "rest-recovery"
+    REST_RECOVERY: "rest-recovery",
+    CHRIS_PREMADES: "chris-premades"
   },
 
   log(message, ...args) {
@@ -47,9 +49,11 @@ globalThis.ZFTFA ??= {
 };
 
 for (const script of [
+  "./settings.js",
   "./features/arcane-ward.js",
   "./features/bloodlust.js",
-  "./features/gaze-of-two-minds.js"
+  "./features/gaze-of-two-minds.js",
+  "./features/battle-familiar.js"
 ]) {
   try {
     await import(script);
@@ -70,5 +74,5 @@ Hooks.once("ready", () => {
     return;
   }
 
-  ZFTFA.log(`✅ v1.2.0 | Feature Automation ready | Foundry ${game.version} | D&D5e ${game.system.version}`);
+  ZFTFA.log(`✅ v1.3.7 | Feature Automation ready | Foundry ${game.version} | D&D5e ${game.system.version}`);
 });
