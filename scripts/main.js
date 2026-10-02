@@ -1,4 +1,4 @@
-console.log("[ZFT] 🧩 v1.3.7 | ZFT Feature Automation loading");
+console.log("[ZFT] 🧩 v1.3.8 | ZFT Feature Automation loading");
 
 globalThis.ZFTFA ??= {
   MODULE_ID: "zft-feature-automation",
@@ -74,5 +74,5 @@ Hooks.once("ready", () => {
     return;
   }
 
-  ZFTFA.log(`✅ v1.3.7 | Feature Automation ready | Foundry ${game.version} | D&D5e ${game.system.version}`);
+  ZFTFA.log(`✅ v1.3.8 | Feature Automation ready | Foundry ${game.version} | D&D5e ${game.system.version}`);
 });

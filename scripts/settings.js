@@ -1,4 +1,4 @@
-console.log("[ZFT] ⚙️ v1.3.7 | Feature Automation settings loading");
+console.log("[ZFT] ⚙️ v1.3.8 | Feature Automation settings loading");
 
 const MODULE_ID = "zft-feature-automation";
 
@@ -78,7 +78,7 @@ class BattleFamiliarAppearanceConfig extends HandlebarsApplicationMixin(Applicat
         const index = await pack.getIndex({fields: ["_id"]});
         packCounts.set(pack.collection, index.size);
       } catch (error) {
-        console.warn(`[ZFT] ⚠️ v1.3.7 | Could not read Actor count for ${pack.collection}`, error);
+        console.warn(`[ZFT] ⚠️ v1.3.8 | Could not read Actor count for ${pack.collection}`, error);
         packCounts.set(pack.collection, null);
       }
     }
@@ -176,5 +176,5 @@ Hooks.once("init", () => {
     restricted: true
   });
 
-  console.log("[ZFT] ⚙️ v1.3.7 | Battle Familiar appearance settings registered");
+  console.log("[ZFT] ⚙️ v1.3.8 | Battle Familiar appearance settings registered");
 });

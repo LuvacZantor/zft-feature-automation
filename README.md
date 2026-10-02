@@ -28,6 +28,8 @@ When Battle Familiar is cast, ZFT:
 - Creates Multiattack using half the spell level, rounded down.
 - Adds Flyby for Flyer and Prowl for Stalker.
 - Gives a newly summoned Battle Familiar its own Initiative through CPR.
+- Reuses CPR Find Familiar summon visuals for new Battle Familiar summons: Celestial uses the celestial effect, Fey uses the nature effect, and Fiend uses the fire effect.
+- Plays the matching CPR summon visual on an existing familiar when Battle Familiar empowers it in place.
 - Replaces an earlier ZFT Battle Familiar when the spell is cast again.
 - Can use portrait/token artwork from GM-selected Actor compendiums for newly summoned familiars without copying that artwork into ZFT.
 - Provides a searchable graphical appearance picker that shows portrait artwork first and token artwork as a fallback.
@@ -35,6 +37,7 @@ When Battle Familiar is cast, ZFT:
 - Loads 40 appearance results initially and automatically adds more as the caster scrolls.
 - Lets the caster choose a specific appearance or use the per-cast Randomize Appearance checkbox.
 - Loads only selected compendium indexes when a new familiar actually needs an appearance and caches the filtered list for the session.
+- Resolves wildcard prototype-token artwork (for example `owl-*.webp`) to a concrete token image when an appearance is selected, with portrait artwork as a safe fallback.
 
 If CPR Find Familiar is already active and its familiar is currently placed, ZFT empowers that familiar in place instead of summoning a second familiar. The familiar retains its current HP and creature identity, receives Battle Familiar temporary HP and Battle Familiar statistics, and is restored when the effect ends or the granted temporary HP reaches 0.
 
@@ -105,4 +108,4 @@ The effective order is:
 
 ## Version
 
-Current release: v1.3.7
+Current release: v1.3.8

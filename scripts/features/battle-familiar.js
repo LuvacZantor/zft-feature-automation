@@ -1,4 +1,4 @@
-console.log("[ZFT] 🐾 v1.3.7 | Battle Familiar automation loading");
+console.log("[ZFT] 🐾 v1.3.8 | Battle Familiar automation loading");
 
 globalThis.ZFTFA ??= {
   MODULE_ID: "zft-feature-automation"
@@ -334,6 +334,104 @@ ZFTFA.BattleFamiliar = {
     return choices;
   },
 
+  async resolveAppearanceArt(appearance) {
+    if (!appearance) return null;
+
+    const resolved = {...appearance};
+    const pack = game.packs.get(appearance.pack);
+
+    const fallbackToPortrait = () => {
+      const portrait = this._isUsefulArtPath(resolved.portrait)
+        ? resolved.portrait
+        : this._isUsefulArtPath(resolved.thumbnail)
+          ? resolved.thumbnail
+          : null;
+
+      if (!this._isUsefulArtPath(resolved.token) || String(resolved.token).includes("*")) {
+        resolved.token = portrait;
+      }
+
+      if (!this._isUsefulArtPath(resolved.portrait)) {
+        resolved.portrait = resolved.token ?? null;
+      }
+
+      resolved.thumbnail = resolved.portrait ?? resolved.token ?? null;
+      return resolved;
+    };
+
+    if (!pack || pack.documentName !== "Actor") {
+      return fallbackToPortrait();
+    }
+
+    try {
+      const sourceActor = await pack.getDocument(appearance.id);
+      if (!sourceActor) return fallbackToPortrait();
+
+      const portrait = this._isUsefulArtPath(sourceActor.img)
+        ? sourceActor.img
+        : null;
+
+      let token = this._isUsefulArtPath(sourceActor.prototypeToken?.texture?.src)
+        ? sourceActor.prototypeToken.texture.src
+        : null;
+
+      if (token?.includes("*")) {
+        let tokenImages = [];
+
+        try {
+          if (typeof sourceActor.getTokenImages === "function") {
+            tokenImages = await sourceActor.getTokenImages();
+          }
+        } catch (error) {
+          ZFTFA.warn("⚠️ Battle Familiar | Could not resolve wildcard token artwork", {
+            appearance: appearance.name,
+            pack: appearance.pack,
+            token,
+            error
+          });
+        }
+
+        const concreteImages = (tokenImages ?? []).filter(path =>
+          this._isUsefulArtPath(path) && !String(path).includes("*")
+        );
+
+        if (concreteImages.length) {
+          token = concreteImages[Math.floor(Math.random() * concreteImages.length)];
+        } else {
+          token = portrait;
+        }
+      }
+
+      resolved.portrait = portrait ?? resolved.portrait ?? token ?? null;
+      resolved.token = token ?? resolved.portrait ?? null;
+
+      // Never hand a wildcard path to CPR/Foundry as the actual spawned
+      // token texture. If it could not be resolved, use the portrait.
+      if (String(resolved.token ?? "").includes("*")) {
+        resolved.token = resolved.portrait ?? null;
+      }
+
+      resolved.thumbnail = resolved.portrait ?? resolved.token ?? null;
+
+      ZFTFA.log("🖼️ Battle Familiar | Appearance artwork resolved", {
+        appearance: resolved.name,
+        pack: resolved.pack,
+        portrait: resolved.portrait,
+        token: resolved.token
+      });
+
+      return resolved;
+    } catch (error) {
+      ZFTFA.warn("⚠️ Battle Familiar | Could not load selected appearance Actor", {
+        appearance: appearance.name,
+        pack: appearance.pack,
+        error
+      });
+
+      return fallbackToPortrait();
+    }
+  },
+
   async chooseNewFamiliarOptions(title) {
     const appearanceSettings = this.getAppearanceSettings();
     const appearances = appearanceSettings.enabled
@@ -639,6 +737,46 @@ ZFTFA.BattleFamiliar = {
     };
   },
 
+  getSummonAnimationKey(creatureType) {
+    switch (String(creatureType ?? "").trim().toLowerCase()) {
+      case "celestial":
+        return "celestial";
+      case "fey":
+        return "nature";
+      case "fiend":
+        return "fire";
+      default:
+        return "none";
+    }
+  },
+
+  async playBattleFamiliarEffect(tokenDocument, creatureType) {
+    const animationKey = this.getSummonAnimationKey(creatureType);
+    if (animationKey === "none") return;
+
+    const animationUtils = this.cpr?.utils?.animationUtils;
+    const callback = animationUtils?.summonEffects?.[animationKey];
+    if (typeof callback !== "function") return;
+
+    if (!(animationUtils?.jb2aCheck?.() === "patreon" && animationUtils?.aseCheck?.())) return;
+
+    const tokenObject = tokenDocument?.object
+      ?? (tokenDocument?.id ? canvas.tokens?.get(tokenDocument.id) : null)
+      ?? null;
+
+    if (!tokenObject) return;
+
+    try {
+      await callback(null, tokenObject, {}, 0);
+    } catch (error) {
+      ZFTFA.warn("⚠️ Battle Familiar | Could not play summon effect", {
+        animationKey,
+        token: tokenDocument?.name ?? tokenObject?.name ?? null,
+        error
+      });
+    }
+  },
+
   async buildBattleItems(originItem, form, spellLevel) {
     const Summons = this.cpr.Summons;
     const stats = this.getBattleStats(form, spellLevel);
@@ -846,16 +984,26 @@ ZFTFA.BattleFamiliar = {
     }
 
     const items = await this.buildBattleItems(workflow.item, form, spellLevel);
+    const resolvedAppearance = await this.resolveAppearanceArt(appearance);
     const updates = this.buildActorUpdates({
       workflow,
       form,
       creatureType,
       spellLevel,
       items,
-      appearance
+      appearance: resolvedAppearance
     });
 
     const stats = this.getBattleStats(form, spellLevel);
+    const animation = this.getSummonAnimationKey(creatureType);
+    const animationUtils = this.cpr?.utils?.animationUtils;
+
+    ZFTFA.log("✨ Battle Familiar | CPR summon animation selected", {
+      animation,
+      jb2a: animationUtils?.jb2aCheck?.() ?? false,
+      animatedSpellEffectsCartoon: animationUtils?.aseCheck?.() ?? false,
+      sequencer: animationUtils?.sequencerCheck?.() ?? false
+    });
 
     const spawned = await this.cpr.Summons.spawn(
       sourceActor,
@@ -865,7 +1013,7 @@ ZFTFA.BattleFamiliar = {
       {
         duration: 3600,
         range: 10,
-        animation: "none",
+        animation,
         initiativeType: "separate",
         customIdentifier: this.SUMMON_IDENTIFIER,
         additionalSummonVaeButtons: items
@@ -888,8 +1036,9 @@ ZFTFA.BattleFamiliar = {
       ac: stats.ac,
       hp: stats.hp,
       attacks: stats.attacks,
-      appearance: appearance?.name ?? "generic",
-      appearancePack: appearance?.pack ?? null,
+      appearance: resolvedAppearance?.name ?? "generic",
+      appearancePack: resolvedAppearance?.pack ?? null,
+      appearanceToken: resolvedAppearance?.token ?? null,
       token: spawned[0]?.name
     });
   },
@@ -1006,6 +1155,11 @@ ZFTFA.BattleFamiliar = {
         identifier: this.EMPOWER_IDENTIFIER,
         rules: "modern"
       }
+    );
+
+    await this.playBattleFamiliarEffect(
+      familiarToken,
+      familiarActor.system?.details?.type?.value
     );
 
     await ChatMessage.create({
@@ -1126,5 +1280,5 @@ ZFTFA.BattleFamiliar = {
 
 Hooks.once("ready", async () => {
   await ZFTFA.BattleFamiliar.register();
-  ZFTFA.log("✅ v1.3.7 | Battle Familiar automation ready");
+  ZFTFA.log("✅ v1.3.8 | Battle Familiar automation ready");
 });
