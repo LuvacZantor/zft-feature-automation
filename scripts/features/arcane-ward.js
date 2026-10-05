@@ -1,4 +1,4 @@
-console.log("[ZFT] 🛡️ v1.3.0 | Arcane Ward feature automation loading");
+console.log("[ZFT] 🛡️ v1.3.9 | Arcane Ward feature automation loading");
 
 const MODULE_ID = "zft-feature-automation";
 const ARCANE_WARD_NAME = "Arcane Ward";
@@ -29,8 +29,8 @@ function error(message, data) {
 }
 
 function debug(message, data) {
-  if (data === undefined) console.log(`[ZFT] 🧪 v1.3.0 | ${message}`);
-  else console.log(`[ZFT] 🧪 v1.3.0 | ${message}`, data);
+  if (data === undefined) console.log(`[ZFT] 🧪 v1.3.9 | ${message}`);
+  else console.log(`[ZFT] 🧪 v1.3.9 | ${message}`, data);
 }
 
 function itemDiagnostic(item) {
@@ -687,6 +687,24 @@ async function getProjectedWardCandidates(owner, entries) {
       continue;
     }
 
+    const ownerDisposition = owner.token?.document?.disposition ?? owner.token?.disposition;
+    const targetDisposition = entry.token?.document?.disposition ?? entry.token?.disposition;
+
+    if (
+      ownerDisposition !== undefined
+      && ownerDisposition !== null
+      && targetDisposition !== undefined
+      && targetDisposition !== null
+      && ownerDisposition !== targetDisposition
+    ) {
+      debug(`Projected Ward candidate rejected | ${entry.actor.name}`, {
+        reason: "different token disposition",
+        ownerDisposition,
+        targetDisposition
+      });
+      continue;
+    }
+
     const damage = getDamageAmount(entry.damageItem);
     if (damage <= 0) {
       debug(`Projected Ward candidate rejected | ${entry.actor.name}`, { reason: "no damage", damage });
@@ -1123,5 +1141,5 @@ Hooks.once("ready", () => {
   Hooks.on("midi-qol.preTargetDamageApplication", processDamageEvent);
   Hooks.on("dnd5e.postUseActivity", processArcaneWardSpellUse);
   Hooks.on("dnd5e.restCompleted", processArcaneWardRest);
-  log("✅ v1.3.0 | Arcane Ward feature automation ready");
+  log("✅ v1.3.9 | Arcane Ward feature automation ready");
 });

@@ -82,6 +82,7 @@ Projected Ward is handled as an optional Reaction when another creature takes da
 - Detects the 2024 `Projected Ward` feature.
 - Checks that the ward owner still has Arcane Ward HP remaining.
 - Checks whether the Reaction has already been used.
+- Requires the damaged creature to use the same token disposition as the ward owner, preventing enemy damage from generating Projected Ward prompts.
 - Requires the damaged creature to be within 30 feet.
 - Requires the ward owner to be able to see the damaged creature.
 - Uses Midi-QOL's configured Reaction timeout.
@@ -108,4 +109,4 @@ The effective order is:
 
 ## Version
 
-Current release: v1.3.8
+Current release: v1.3.9
